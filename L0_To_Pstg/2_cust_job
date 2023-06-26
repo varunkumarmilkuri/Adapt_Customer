@@ -1,1 +1,75 @@
-dfg
+import sys
+import pyspark
+from pyspark.sql.functions import col
+from pyspark.sql.types import StringType,BooleanType,DateType,IntegerType,DoubleType
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+args = getResolvedOptions(sys.argv,['TempDir'])
+
+sc = SparkContext.getOrCreate()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+logger = glueContext.get_logger()
+
+# Postgres - Construct JDBC connection options
+pgconn = {
+    "url": "jdbc:postgresql://172.31.9.108:5432/demodb",
+    "dbtable": "employee",
+    "user": "postgres",
+    "password": "password1"}
+    
+# Mysql - Construct JDBC connection options
+mysqlconn = {
+    "url": "jdbc:mysql://172.31.9.108:3306/demodb",
+    "dbtable": "employee",
+    "user": "postgres",
+    "password": "password1"}
+    
+# Redshift - Construct JDBC connection options
+#redshiftconn = {  
+#    "url": "jdbc:redshift://redshift-cluster-1.c2fnra0zrekb.us-east-2.redshift.amazonaws.com:5439/demodb",
+#    "dbtable": "emp",
+#    "user": "awsuser",
+#    "password": "yV3627&dGEHj",
+#   "redshiftTmpDir": args["TempDir"],
+#    "aws_iam_role": "arn:aws:iam::784201552332:role/Redshift_adapt_Role"
+#}
+
+logger.info("-------------Reading the data from the source database -------------")
+
+file_format="csv"
+source="postgres"
+if source=="postgres":
+    sourcedf = glueContext.create_dynamic_frame.from_options(connection_type="postgresql",
+                                                          connection_options=pgconn)
+    #path="s3://testadapt/output_pg_to_s3/"+file_format+"/" 
+    path="s3://testadapt/test/"
+elif source=="mysql":
+    sourcedf = glueContext.create_dynamic_frame.from_options(connection_type="mysql",
+                                                          connection_options=mysqlconn)
+    path="s3://testadapt/output_mysql_to_s3/"+file_format+"/"
+else:
+    sys.exit("Please provide a valid source")
+    
+src_df=sourcedf.toDF()   
+#df=src_df.dropDuplicates(subset=['emp_id'])
+src_df.createOrReplaceTempView("employee")
+df1 = spark.sql("SELECT * FROM employee where emp_is_active='Y'")
+
+#df2 = df1.withColumn("joining_date",col("joining_date").cast(DateType())) \
+#               .withColumn("emp_dob",col("emp_dob").cast(DateType())) \
+#               .withColumn("emp_id",col("emp_id").cast(IntegerType())) \
+#               .withColumn("emp_salary",col("emp_salary").cast(DoubleType()))
+                
+#df3 = df2.dropna()
+
+logger.info("-------------Writing to S3 -------------")
+
+if bool(df1.head(1)):
+    df1.coalesce(1).write.option("header","true").format(file_format).mode('overwrite').save(path)
+
+
